@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   FEDERAL_BRACKETS,
@@ -40,6 +40,11 @@ export default function TaxCalculator() {
     { id: 6, name: 'Subscriptions', amount: '' },
   ]);
   const [newExpenseName, setNewExpenseName] = useState('');
+
+  // Scroll to top when switching between steps
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [step]);
 
   const isSelfEmployed = employmentType === 'self-employed';
   const income = parseFloat(grossIncome) || 0;
@@ -276,6 +281,14 @@ export default function TaxCalculator() {
 
             {calculations && (
               <>
+                {/* Scroll indicator for mobile */}
+                <div className="md:hidden flex flex-col items-center mb-6 animate-bounce">
+                  <p className="text-sm text-gray-400 mb-2">Scroll down for your results</p>
+                  <svg className="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                </div>
+
                 {/* Summary Cards */}
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-8">
                   <div className="bg-gray-900 rounded-2xl p-4 sm:p-5 border border-gray-800">
