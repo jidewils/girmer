@@ -736,7 +736,7 @@ export default function TaxCalculator() {
                     <p className="text-xs text-gray-500">/month</p>
                   </div>
                   <div className={`rounded-2xl p-5 border ${savingsCalculations.monthlySavings >= 0 ? 'bg-emerald-900/30 border-emerald-800' : 'bg-red-900/30 border-red-800'}`}>
-                    <p className="text-sm mb-1">{savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}>Monthly Savings</p>
+                    <p className={`text-sm mb-1 ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>Monthly Savings</p>
                     <p className={`text-2xl font-bold ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${savingsCalculations.monthlySavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                   </div>
                   <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
