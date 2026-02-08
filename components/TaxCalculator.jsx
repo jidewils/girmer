@@ -43,7 +43,7 @@ export default function TaxCalculator() {
   const [incomeInputMode, setIncomeInputMode] = useState('annual');
   const [hourlyRate, setHourlyRate] = useState('');
   const [hoursPerWeek, setHoursPerWeek] = useState('40');
-  const [weeksPerYear, setWeeksPerYear] = useState('50');
+  const [weeksPerYear, setWeeksPerYear] = useState('52');
   
   // Basic Info
   const [grossIncome, setGrossIncome] = useState('');
@@ -80,12 +80,40 @@ export default function TaxCalculator() {
   ]);
   const [newExpenseName, setNewExpenseName] = useState('');
   
+  // ETF Data
+  const [etfData, setEtfData] = useState([]);
+  const [etfLoading, setEtfLoading] = useState(false);
+  const [etfLastUpdated, setEtfLastUpdated] = useState(null);
+  
   // Email capture modal
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailForm, setEmailForm] = useState({ name: '', email: '' });
   const [emailErrors, setEmailErrors] = useState({});
   const [isSubmittingEmail, setIsSubmittingEmail] = useState(false);
   const [emailSuccess, setEmailSuccess] = useState(false);
+  
+  // Fetch ETF data when Step 3 is loaded
+  useEffect(() => {
+    if (step === 3 && etfData.length === 0 && !etfLoading) {
+      fetchETFData();
+    }
+  }, [step]);
+
+  const fetchETFData = async () => {
+    setEtfLoading(true);
+    try {
+      const res = await fetch('/api/etf-data');
+      const data = await res.json();
+      if (data.etfs) {
+        setEtfData(data.etfs);
+        setEtfLastUpdated(data.lastUpdated);
+      }
+    } catch (error) {
+      console.error('Failed to fetch ETF data:', error);
+    } finally {
+      setEtfLoading(false);
+    }
+  };
   
   // Scroll to top when step changes
   useEffect(() => {
@@ -265,7 +293,7 @@ export default function TaxCalculator() {
     
     try {
       // Save to Upstash via API
-      const res = await fetch('/api/subscribe', {
+      await fetch('/api/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -276,15 +304,40 @@ export default function TaxCalculator() {
         }),
       });
       
-      if (!res.ok) {
-        throw new Error('Failed to save');
+      // Generate PDF
+      const pdfRes = await fetch('/api/generate-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: emailForm.name,
+          income,
+          province,
+          provinceName: PROVINCE_NAMES[province],
+          employmentType,
+          rrspContribution: validRRSP,
+          calculations,
+          familyMode,
+          spouseIncome: spouseIncomeValue,
+          children,
+          ccb: calculations?.ccb || null,
+          hasDebt,
+          debtCalculations,
+          savingsCalculations,
+          expenses,
+          etfData,
+        }),
+      });
+      
+      if (pdfRes.ok) {
+        const html = await pdfRes.text();
+        // Open PDF in new tab
+        const pdfWindow = window.open('', '_blank');
+        pdfWindow.document.write(html);
+        pdfWindow.document.close();
       }
       
       setIsSubmittingEmail(false);
       setEmailSuccess(true);
-      
-      // TODO: Generate and download actual PDF here
-      // For now, just show success
       
       setTimeout(() => {
         setShowEmailModal(false);
@@ -426,7 +479,7 @@ export default function TaxCalculator() {
             {!isIncorporated && (
               <div className="bg-gray-900 rounded-2xl p-4 sm:p-6 mb-6 border border-gray-800">
                 <label className="block text-sm font-medium text-gray-400 mb-2">
-                  RRSP Contribution {income > 0 && <span className="text-gray-500 ml-2">(Max: ${maxRRSPRoom.toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
+                  Annual RRSP Contribution {income > 0 && <span className="text-gray-500 ml-2">(Max: ${maxRRSPRoom.toLocaleString(undefined, { maximumFractionDigits: 0 })})</span>}
                 </label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
@@ -667,12 +720,6 @@ export default function TaxCalculator() {
                     </div>
                   )}
                 </div>
-
-                <div className="flex justify-center mb-8">
-                  <button onClick={() => setShowEmailModal(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-4 px-8 rounded-xl flex items-center gap-2">
-                    📄 Download PDF Report
-                  </button>
-                </div>
               </>
             )}
 
@@ -736,8 +783,8 @@ export default function TaxCalculator() {
                     <p className="text-xs text-gray-500">/month</p>
                   </div>
                   <div className={`rounded-2xl p-5 border ${savingsCalculations.monthlySavings >= 0 ? 'bg-emerald-900/30 border-emerald-800' : 'bg-red-900/30 border-red-800'}`}>
-  <p className={`text-sm mb-1 ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>Monthly Savings</p>
-  <p className={`text-2xl font-bold ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${savingsCalculations.monthlySavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                    <p className={`text-sm mb-1 ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>Monthly Savings</p>
+                    <p className={`text-2xl font-bold ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${savingsCalculations.monthlySavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                   </div>
                   <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
                     <p className="text-sm text-gray-400 mb-1">Savings Rate</p>
@@ -864,6 +911,83 @@ export default function TaxCalculator() {
                 </div>
               </div>
             </div>
+
+            {/* ETF Performance Table */}
+            <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden mb-8 mt-8">
+              <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold">📊 Popular Canadian ETFs</h3>
+                  {etfLastUpdated && (
+                    <p className="text-xs text-gray-500">Last updated: {new Date(etfLastUpdated).toLocaleDateString()}</p>
+                  )}
+                </div>
+                <button 
+                  onClick={fetchETFData} 
+                  disabled={etfLoading}
+                  className="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-50"
+                >
+                  {etfLoading ? 'Loading...' : 'Refresh'}
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-800/50">
+                    <tr>
+                      <th className="text-left py-3 px-4 text-sm text-gray-400 font-medium">ETF</th>
+                      <th className="text-left py-3 px-4 text-sm text-gray-400 font-medium">Name</th>
+                      <th className="text-right py-3 px-4 text-sm text-gray-400 font-medium">Price</th>
+                      <th className="text-right py-3 px-4 text-sm text-gray-400 font-medium">YTD</th>
+                      <th className="text-right py-3 px-4 text-sm text-gray-400 font-medium">1Y Return</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800">
+                    {etfLoading ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-gray-500">
+                          Loading ETF data...
+                        </td>
+                      </tr>
+                    ) : etfData.length > 0 ? (
+                      etfData.map((etf, i) => (
+                        <tr key={etf.symbol || i} className="hover:bg-gray-800/30">
+                          <td className="py-3 px-4">
+                            <span className="font-mono font-medium text-emerald-400">{etf.symbol}</span>
+                          </td>
+                          <td className="py-3 px-4 text-gray-300 text-sm">{etf.name}</td>
+                          <td className="py-3 px-4 text-right text-gray-300">
+                            {etf.price ? `$${etf.price.toFixed(2)}` : '-'}
+                          </td>
+                          <td className={`py-3 px-4 text-right font-medium ${etf.ytdReturn && etf.ytdReturn !== 'N/A' && parseFloat(etf.ytdReturn) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {etf.ytdReturn && etf.ytdReturn !== 'N/A' ? `${parseFloat(etf.ytdReturn) >= 0 ? '+' : ''}${etf.ytdReturn}%` : '-'}
+                          </td>
+                          <td className={`py-3 px-4 text-right font-medium ${etf.oneYearReturn && etf.oneYearReturn !== 'N/A' && parseFloat(etf.oneYearReturn) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {etf.oneYearReturn && etf.oneYearReturn !== 'N/A' ? `${parseFloat(etf.oneYearReturn) >= 0 ? '+' : ''}${etf.oneYearReturn}%` : '-'}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-gray-500">
+                          Unable to load ETF data
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-3 bg-gray-800/30 border-t border-gray-800">
+                <p className="text-xs text-gray-500 text-center">Data provided by Twelve Data. Past performance does not guarantee future results.</p>
+              </div>
+            </div>
+
+            {/* Download PDF Report Button */}
+            <div className="bg-gradient-to-r from-emerald-900/30 to-teal-900/30 rounded-2xl p-6 border border-emerald-800 text-center">
+              <h3 className="text-lg font-semibold text-emerald-300 mb-2">📄 Get Your Complete Financial Report</h3>
+              <p className="text-sm text-gray-400 mb-4">Download a PDF with your tax breakdown, savings plan, debt strategy, and investment recommendations.</p>
+              <button onClick={() => setShowEmailModal(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-4 px-8 rounded-xl transition-colors">
+                Download PDF Report
+              </button>
+            </div>
           </>
         )}
       </main>
@@ -919,13 +1043,13 @@ export default function TaxCalculator() {
       <footer className="border-t border-gray-800 mt-16 py-8">
         <div className="max-w-6xl mx-auto px-4">
           <div className="text-center text-sm text-gray-600 mb-6">
-            <p>Girmer — Canadian Tax Calculator & Savings Planner</p>
-            <p className="mt-1">Tax rates based on 2025 figures. For informational purposes only.</p>
+            <p>Generated by Girmer</p>
           </div>
           <div className="border-t border-gray-800 pt-6">
             <p className="text-xs text-gray-500 text-center max-w-2xl mx-auto">
-              <strong>Disclaimer:</strong> This calculator provides estimates for informational purposes only and does not constitute financial, tax, or legal advice. 
-              Consult a qualified professional for personalized advice. {AFFILIATE_DISCLOSURE.short}
+              <strong>Disclaimer:</strong> This report is for informational purposes only and does not constitute financial, tax, or legal advice. 
+              Tax calculations are estimates based on 2025 rates. Consult a qualified professional for personalized advice. 
+              Investment returns are hypothetical and not guaranteed. {AFFILIATE_DISCLOSURE.short}
             </p>
           </div>
         </div>
