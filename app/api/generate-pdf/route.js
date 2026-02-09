@@ -295,11 +295,21 @@ function generatePDFHTML(data) {
   <div class="section page-break">
     <h2 class="section-title">🚀 Investment & Growth Plan</h2>
     
+    ${(savingsCalculations?.monthlySavings || 0) > 0 ? `
     <div class="callout green">
       <p>📈 <strong>Your ${$(savingsCalculations?.monthlySavings || 0)}/month invested at 7% average return:</strong></p>
       <p>• In 10 years: <strong>${$(Math.round((savingsCalculations?.monthlySavings || 0) * 173))}</strong></p>
       <p>• In 25 years: <strong>${$(Math.round((savingsCalculations?.monthlySavings || 0) * 810))}</strong></p>
     </div>
+    ` : `
+    <div class="callout red">
+      <p>⚠️ <strong>Your expenses exceed your income by ${$(Math.abs(savingsCalculations?.monthlySavings || 0))}/month</strong></p>
+      <p>Focus on reducing expenses or increasing income before investing. Consider:</p>
+      <p>• Reviewing and cutting unnecessary expenses</p>
+      <p>• Paying off high-interest debt first</p>
+      <p>• Looking for additional income sources</p>
+    </div>
+    `}
 
     <h3 style="font-size: 14px; font-weight: 600; margin: 20px 0 15px;">Recommended Investment Order</h3>
     <div class="steps">

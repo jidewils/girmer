@@ -117,7 +117,12 @@ export default function TaxCalculator() {
   
   // Scroll to top when step changes
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Immediate scroll for reliability, especially on mobile
+    window.scrollTo(0, 0);
+    // Also try smooth scroll as backup
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
   }, [step]);
   
   // Lock body scroll when modal is open
@@ -293,7 +298,7 @@ export default function TaxCalculator() {
     
     try {
       // Save to Upstash via API
-      await fetch('/api/subscribe', {
+      const subscribeRes = await fetch('/api/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -303,6 +308,10 @@ export default function TaxCalculator() {
           province: province || null,
         }),
       });
+
+      if (!subscribeRes.ok) {
+        throw new Error('Failed to save subscription');
+      }
       
       // Generate PDF
       const pdfRes = await fetch('/api/generate-pdf', {
@@ -330,10 +339,28 @@ export default function TaxCalculator() {
       
       if (pdfRes.ok) {
         const html = await pdfRes.text();
-        // Open PDF in new tab
-        const pdfWindow = window.open('', '_blank');
-        pdfWindow.document.write(html);
-        pdfWindow.document.close();
+        
+        // Create a Blob and download link (works better on mobile)
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        
+        // Try opening in new tab first
+        const pdfWindow = window.open(url, '_blank');
+        
+        // If popup was blocked (common on mobile), use download fallback
+        if (!pdfWindow || pdfWindow.closed || typeof pdfWindow.closed === 'undefined') {
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `Girmer_Tax_Report_${emailForm.name.replace(/\s+/g, '_')}.html`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+        
+        // Clean up
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } else {
+        throw new Error('Failed to generate PDF');
       }
       
       setIsSubmittingEmail(false);
@@ -378,11 +405,35 @@ export default function TaxCalculator() {
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <h1 className="text-2xl font-bold text-emerald-400">Girmer</h1>
           <div className="flex gap-2">
-            <button onClick={() => setStep(1)} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${step === 1 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>Tax Calculator</button>
-            <button onClick={() => setStep(2)} disabled={!calculations} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${step === 2 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'} ${!calculations ? 'opacity-50 cursor-not-allowed' : ''}`}>Savings Planner</button>
-            <button onClick={() => setStep(3)} disabled={!calculations} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${step === 3 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'} ${!calculations ? 'opacity-50 cursor-not-allowed' : ''}`}>Invest & Grow</button>
+            <button onClick={() => setStep(1)} className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${step === 1 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>Tax Calculator</button>
+            <button onClick={() => calculations && setStep(2)} className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${step === 2 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400'} ${!calculations ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-700'}`}>Savings Planner</button>
+            <button onClick={() => calculations && setStep(3)} className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${step === 3 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400'} ${!calculations ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-700'}`}>Invest & Grow</button>
           </div>
         </div>
+        
+        {/* Progress Indicator - shows until calculations are done */}
+        {!calculations && (
+          <div className="bg-amber-900/30 border-t border-amber-800/50 px-4 py-3">
+            <div className="max-w-6xl mx-auto flex items-center gap-2 text-sm">
+              <span className="text-amber-400">📍</span>
+              <span className="text-amber-200">Step 1 of 3</span>
+              <span className="text-amber-400/70">—</span>
+              <span className="text-amber-100/80">Enter your income to unlock Savings Planner & Invest</span>
+            </div>
+          </div>
+        )}
+        
+        {/* Success message - briefly shows when unlocked */}
+        {calculations && step === 1 && (
+          <div className="bg-emerald-900/30 border-t border-emerald-800/50 px-4 py-3">
+            <div className="max-w-6xl mx-auto flex items-center gap-2 text-sm">
+              <span className="text-emerald-400">✓</span>
+              <span className="text-emerald-200">All steps unlocked!</span>
+              <span className="text-emerald-400/70">—</span>
+              <span className="text-emerald-100/80">Scroll down to see your results, or continue to Savings Planner</span>
+            </div>
+          </div>
+        )}
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8">
@@ -405,7 +456,7 @@ export default function TaxCalculator() {
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-400 mb-2">Hourly Rate</label>
                     <div className="relative">
@@ -426,9 +477,9 @@ export default function TaxCalculator() {
 
               {incomeInputMode === 'hourly' && income > 0 && (
                 <div className="mt-4 p-4 bg-emerald-900/20 border border-emerald-800 rounded-xl">
-                  <div className="flex justify-between items-center">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                     <span className="text-emerald-400">Calculated Annual Income</span>
-                    <span className="text-2xl font-bold text-emerald-400">${income.toLocaleString()}</span>
+                    <span className="text-xl sm:text-2xl font-bold text-emerald-400">${income.toLocaleString()}</span>
                   </div>
                 </div>
               )}
@@ -652,14 +703,14 @@ export default function TaxCalculator() {
                 {calculations.ccb && calculations.ccb.annual > 0 && (
                   <div className="bg-gradient-to-r from-blue-900/30 to-cyan-900/30 rounded-2xl p-5 border border-blue-800 mb-8">
                     <h3 className="text-lg font-semibold text-blue-300 mb-4">👨‍👩‍👧‍👦 Canada Child Benefit</h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
                       <div className="bg-gray-900/50 rounded-xl p-4">
                         <p className="text-xs text-gray-400">Monthly</p>
-                        <p className="text-2xl font-bold text-blue-400">${calculations.ccb.monthly.toLocaleString()}</p>
+                        <p className="text-xl sm:text-2xl font-bold text-blue-400">${calculations.ccb.monthly.toLocaleString()}</p>
                       </div>
                       <div className="bg-gray-900/50 rounded-xl p-4">
                         <p className="text-xs text-gray-400">Annual</p>
-                        <p className="text-2xl font-bold text-blue-400">${calculations.ccb.annual.toLocaleString()}</p>
+                        <p className="text-xl sm:text-2xl font-bold text-blue-400">${calculations.ccb.annual.toLocaleString()}</p>
                       </div>
                     </div>
                   </div>
@@ -668,18 +719,18 @@ export default function TaxCalculator() {
                 {hasDebt && debtCalculations && debtCalculations.strategies && (
                   <div className="bg-gradient-to-r from-red-900/30 to-orange-900/30 rounded-2xl p-5 border border-red-800 mb-8">
                     <h3 className="text-lg font-semibold text-red-300 mb-4">💳 Debt Payoff Strategy</h3>
-                    <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-4">
                       <div className="bg-gray-900/50 rounded-xl p-4">
                         <p className="text-xs text-gray-400">Total Debt</p>
-                        <p className="text-xl font-bold text-red-400">${debtCalculations.totalDebt.toLocaleString()}</p>
+                        <p className="text-lg sm:text-xl font-bold text-red-400">${debtCalculations.totalDebt.toLocaleString()}</p>
                       </div>
                       <div className="bg-gray-900/50 rounded-xl p-4">
                         <p className="text-xs text-gray-400">Monthly Interest</p>
-                        <p className="text-xl font-bold text-orange-400">${debtCalculations.totalMonthlyInterest.toLocaleString()}</p>
+                        <p className="text-lg sm:text-xl font-bold text-orange-400">${debtCalculations.totalMonthlyInterest.toLocaleString()}</p>
                       </div>
                       <div className="bg-gray-900/50 rounded-xl p-4">
                         <p className="text-xs text-gray-400">Payoff Time</p>
-                        <p className="text-xl font-bold text-yellow-400">{debtCalculations.strategies.avalanche.months} mo</p>
+                        <p className="text-lg sm:text-xl font-bold text-yellow-400">{debtCalculations.strategies.avalanche.months} mo</p>
                       </div>
                     </div>
                     <p className="text-sm text-gray-400">Recommended: <span className="text-emerald-400 font-medium">{debtCalculations.strategies.recommended === 'avalanche' ? 'Avalanche (highest interest first)' : 'Snowball (lowest balance first)'}</span></p>
@@ -743,6 +794,20 @@ export default function TaxCalculator() {
                 </div>
               </div>
             )}
+
+            {/* Next Step Button */}
+            {calculations && (
+              <div className="mt-8 pt-6 border-t border-gray-800">
+                <button 
+                  onClick={() => setStep(2)} 
+                  className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-4 px-8 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                >
+                  Continue to Savings Planner
+                  <span>→</span>
+                </button>
+                <p className="text-sm text-gray-500 mt-3">See how much you can save and invest each month</p>
+              </div>
+            )}
           </>
         )}
 
@@ -776,19 +841,19 @@ export default function TaxCalculator() {
 
             {savingsCalculations && (
               <>
-                <div className="grid grid-cols-3 gap-4 mb-8">
-                  <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-8">
+                  <div className="bg-gray-900 rounded-2xl p-4 sm:p-5 border border-gray-800">
                     <p className="text-sm text-gray-400 mb-1">Expenses</p>
-                    <p className="text-2xl font-bold text-indigo-400">${savingsCalculations.totalExpenses.toLocaleString()}</p>
+                    <p className="text-xl sm:text-2xl font-bold text-indigo-400">${savingsCalculations.totalExpenses.toLocaleString()}</p>
                     <p className="text-xs text-gray-500">/month</p>
                   </div>
-                  <div className={`rounded-2xl p-5 border ${savingsCalculations.monthlySavings >= 0 ? 'bg-emerald-900/30 border-emerald-800' : 'bg-red-900/30 border-red-800'}`}>
+                  <div className={`rounded-2xl p-4 sm:p-5 border ${savingsCalculations.monthlySavings >= 0 ? 'bg-emerald-900/30 border-emerald-800' : 'bg-red-900/30 border-red-800'}`}>
                     <p className={`text-sm mb-1 ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>Monthly Savings</p>
-                    <p className={`text-2xl font-bold ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${savingsCalculations.monthlySavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                    <p className={`text-xl sm:text-2xl font-bold ${savingsCalculations.monthlySavings >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${savingsCalculations.monthlySavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
                   </div>
-                  <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+                  <div className="bg-gray-900 rounded-2xl p-4 sm:p-5 border border-gray-800">
                     <p className="text-sm text-gray-400 mb-1">Savings Rate</p>
-                    <p className={`text-2xl font-bold ${savingsCalculations.savingsRate >= 20 ? 'text-emerald-400' : savingsCalculations.savingsRate >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>{savingsCalculations.savingsRate.toFixed(1)}%</p>
+                    <p className={`text-xl sm:text-2xl font-bold ${savingsCalculations.savingsRate >= 20 ? 'text-emerald-400' : savingsCalculations.savingsRate >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>{savingsCalculations.savingsRate.toFixed(1)}%</p>
                   </div>
                 </div>
 
@@ -810,6 +875,18 @@ export default function TaxCalculator() {
                     </div>
                   </div>
                 )}
+
+                {/* Next Step Button */}
+                <div className="mt-8 pt-6 border-t border-gray-800">
+                  <button 
+                    onClick={() => setStep(3)} 
+                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-4 px-8 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  >
+                    Continue to Invest & Grow
+                    <span>→</span>
+                  </button>
+                  <p className="text-sm text-gray-500 mt-3">See how your savings can grow over time</p>
+                </div>
               </>
             )}
           </>
@@ -820,24 +897,40 @@ export default function TaxCalculator() {
           <>
             <h2 className="text-2xl font-bold mb-6">Invest & Grow</h2>
             
-            {/* Investment Growth Calculator */}
-            <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl border border-gray-700 p-6 mb-8">
-              <h3 className="font-semibold mb-4">📈 See Your Money Grow</h3>
-              <div className="grid sm:grid-cols-3 gap-4 mb-6">
-                <div className="bg-gray-800/50 rounded-xl p-4 text-center">
-                  <p className="text-xs text-gray-400 mb-1">Monthly Investment</p>
-                  <p className="text-2xl font-bold text-emerald-400">${(savingsCalculations?.monthlySavings || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
-                </div>
-                <div className="bg-gray-800/50 rounded-xl p-4 text-center">
-                  <p className="text-xs text-gray-400 mb-1">In 10 Years (7%)</p>
-                  <p className="text-2xl font-bold text-emerald-400">${Math.round((savingsCalculations?.monthlySavings || 0) * 173).toLocaleString()}</p>
-                </div>
-                <div className="bg-gray-800/50 rounded-xl p-4 text-center">
-                  <p className="text-xs text-gray-400 mb-1">In 25 Years (7%)</p>
-                  <p className="text-2xl font-bold text-emerald-400">${Math.round((savingsCalculations?.monthlySavings || 0) * 810).toLocaleString()}</p>
+            {/* Investment Growth Calculator - Only show if savings is positive */}
+            {(savingsCalculations?.monthlySavings || 0) > 0 ? (
+              <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl border border-gray-700 p-4 sm:p-6 mb-8">
+                <h3 className="font-semibold mb-4">📈 See Your Money Grow</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
+                  <div className="bg-gray-800/50 rounded-xl p-4 text-center">
+                    <p className="text-xs text-gray-400 mb-1">Monthly Investment</p>
+                    <p className="text-xl sm:text-2xl font-bold text-emerald-400">${(savingsCalculations?.monthlySavings || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-xl p-4 text-center">
+                    <p className="text-xs text-gray-400 mb-1">In 10 Years (7%)</p>
+                    <p className="text-xl sm:text-2xl font-bold text-emerald-400">${Math.round((savingsCalculations?.monthlySavings || 0) * 173).toLocaleString()}</p>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-xl p-4 text-center">
+                    <p className="text-xs text-gray-400 mb-1">In 25 Years (7%)</p>
+                    <p className="text-xl sm:text-2xl font-bold text-emerald-400">${Math.round((savingsCalculations?.monthlySavings || 0) * 810).toLocaleString()}</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="bg-gradient-to-br from-red-900/30 to-orange-900/30 rounded-2xl border border-red-800 p-4 sm:p-6 mb-8">
+                <h3 className="font-semibold mb-3 text-red-400">⚠️ Your Expenses Exceed Your Income</h3>
+                <p className="text-gray-300 mb-4">You're spending <span className="font-bold text-red-400">${Math.abs(savingsCalculations?.monthlySavings || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span> more than you earn each month.</p>
+                <div className="bg-gray-900/50 rounded-xl p-4">
+                  <h4 className="font-medium text-yellow-400 mb-2">💡 Suggestions to get back on track:</h4>
+                  <ul className="text-sm text-gray-300 space-y-2">
+                    <li>• Review your expenses in Step 2 - are there areas to cut back?</li>
+                    <li>• Consider negotiating bills (phone, insurance, subscriptions)</li>
+                    <li>• Look for ways to increase income (side gig, ask for a raise)</li>
+                    <li>• Prioritize paying off high-interest debt first</li>
+                  </ul>
+                </div>
+              </div>
+            )}
 
             {/* Recommended Platforms */}
             <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden mb-8">
