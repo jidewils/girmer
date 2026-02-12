@@ -154,7 +154,9 @@ export default function TaxCalculator() {
   
   const spouseIncomeValue = parseFloat(spouseIncome) || 0;
   const spouseRRSPValue = parseFloat(spouseRRSP) || 0;
-  const familyGrossIncome = income + spouseIncomeValue;
+  // Spouse income is now monthly take-home, estimate annual gross for CCB (rough: net * 12 * 1.3)
+  const estimatedSpouseGrossAnnual = spouseIncomeValue > 0 ? spouseIncomeValue * 12 * 1.3 : 0;
+  const familyGrossIncome = income + estimatedSpouseGrossAnnual;
 
   function getMarginalRate(taxableIncome, prov) {
     const lastFederalBracket = FEDERAL_BRACKETS.find(b => taxableIncome <= b.max) || FEDERAL_BRACKETS[FEDERAL_BRACKETS.length - 1];
@@ -181,24 +183,9 @@ export default function TaxCalculator() {
       };
     }
 
-    if (familyMode && spouseIncomeValue > 0) {
-      const familyTax = calculateFamilyTax(
-        income, spouseIncomeValue, province, 
-        isSelfEmployed, false,
-        validRRSP, spouseRRSPValue
-      );
-      const ccb = calculateCCB(familyGrossIncome, children);
-      
-      return {
-        ...familyTax.primary,
-        spouse: familyTax.spouse,
-        family: familyTax.family,
-        ccb,
-        taxableIncome: familyTax.primary.taxableIncome,
-        effectiveRate: (familyTax.primary.totalDeductions / income) * 100,
-        marginalRate: getMarginalRate(familyTax.primary.taxableIncome, province),
-      };
-    }
+    // For family mode with spouse, we still calculate primary earner taxes
+    // Spouse income is entered as monthly net, so no tax calculation needed for them
+    // CCB uses estimated family gross income
 
     const taxableIncome = Math.max(0, income - validRRSP);
     const federalTax = calculateTax(taxableIncome, FEDERAL_BRACKETS);
@@ -216,7 +203,9 @@ export default function TaxCalculator() {
     
     const effectiveRate = (totalDeductions / income) * 100;
     const marginalRate = getMarginalRate(taxableIncome, province);
-    const ccb = children.length > 0 ? calculateCCB(income, children) : null;
+    // Use family gross income for CCB if in family mode, otherwise just primary income
+    const ccbIncome = familyMode && spouseIncomeValue > 0 ? familyGrossIncome : income;
+    const ccb = children.length > 0 ? calculateCCB(ccbIncome, children) : null;
 
     return {
       taxableIncome, federalTax, provincialTax, cpp, ei, totalDeductions,
@@ -238,9 +227,10 @@ export default function TaxCalculator() {
     if (!calculations) return 0;
     let base = calculations.netMonthly || 0;
     if (calculations.ccb) base += calculations.ccb.monthly;
-    if (familyMode && calculations.spouse) base += calculations.spouse.netMonthly;
+    // Spouse income is now entered as monthly take-home, so add directly
+    if (familyMode && spouseIncomeValue > 0) base += spouseIncomeValue;
     return base;
-  }, [calculations, familyMode]);
+  }, [calculations, familyMode, spouseIncomeValue]);
 
   const savingsCalculations = useMemo(() => {
     if (!calculations) return null;
@@ -403,7 +393,21 @@ export default function TaxCalculator() {
       {/* Header */}
       <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <h1 className="text-2xl font-bold text-emerald-400">Girmer</h1>
+          <div className="flex items-center gap-1">
+            {/* Logo: Rising bar chart */}
+            <svg width="36" height="36" viewBox="0 0 50 50" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="barGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+                  <stop offset="0%" style={{stopColor:'#059669'}}/>
+                  <stop offset="100%" style={{stopColor:'#10b981'}}/>
+                </linearGradient>
+              </defs>
+              <rect x="8" y="30" width="8" height="15" rx="2" fill="url(#barGrad)"/>
+              <rect x="20" y="22" width="8" height="23" rx="2" fill="url(#barGrad)"/>
+              <rect x="32" y="12" width="8" height="33" rx="2" fill="url(#barGrad)"/>
+            </svg>
+            <span className="text-2xl font-bold text-emerald-400">Girmer</span>
+          </div>
           <div className="flex gap-2">
             <button onClick={() => setStep(1)} className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${step === 1 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>Tax Calculator</button>
             <button onClick={() => calculations && setStep(2)} className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${step === 2 ? 'bg-emerald-600 text-white' : 'bg-gray-800 text-gray-400'} ${!calculations ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-700'}`}>Savings Planner</button>
@@ -555,26 +559,20 @@ export default function TaxCalculator() {
                 <div className="space-y-4 pt-4 border-t border-gray-800">
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Spouse Annual Income</label>
+                      <label className="block text-sm font-medium text-gray-400 mb-2">Spouse Monthly Take-Home Pay</label>
                       <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                         <input type="number" value={spouseIncome} onChange={(e) => setSpouseIncome(e.target.value)} placeholder="0" className="w-full bg-gray-800 border border-gray-700 rounded-xl py-3 pl-8 pr-4 text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                       </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-400 mb-2">Spouse RRSP</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                        <input type="number" value={spouseRRSP} onChange={(e) => setSpouseRRSP(e.target.value)} placeholder="0" className="w-full bg-gray-800 border border-gray-700 rounded-xl py-3 pl-8 pr-4 text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                      </div>
+                      <p className="text-xs text-gray-500 mt-1">What hits their bank account each month</p>
                     </div>
                   </div>
 
                   {spouseIncomeValue > 0 && (
                     <div className="bg-gray-800/50 rounded-xl p-4">
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-400">Combined Family Income</span>
-                        <span className="text-xl font-bold text-emerald-400">${familyGrossIncome.toLocaleString()}</span>
+                        <span className="text-gray-400">Combined Monthly Take-Home</span>
+                        <span className="text-xl font-bold text-emerald-400">${((calculations?.netMonthly || 0) + spouseIncomeValue).toLocaleString()}</span>
                       </div>
                     </div>
                   )}
@@ -1009,9 +1007,13 @@ export default function TaxCalculator() {
             <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden mb-8 mt-8">
               <div className="p-4 border-b border-gray-800 flex items-center justify-between">
                 <div>
-                  <h3 className="font-semibold">📊 Popular Canadian ETFs</h3>
-                  {etfLastUpdated && (
-                    <p className="text-xs text-gray-500">Last updated: {new Date(etfLastUpdated).toLocaleDateString()}</p>
+                  <h3 className="font-semibold">📊 Popular ETFs</h3>
+                  {etfLastUpdated ? (
+                    <p className="text-xs text-gray-500">
+                      Market data from {new Date(etfLastUpdated).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-500">Market data · Updates daily</p>
                   )}
                 </div>
                 <button 
@@ -1019,7 +1021,7 @@ export default function TaxCalculator() {
                   disabled={etfLoading}
                   className="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-50"
                 >
-                  {etfLoading ? 'Loading...' : 'Refresh'}
+                  {etfLoading ? 'Loading...' : '↻ Refresh'}
                 </button>
               </div>
               <div className="overflow-x-auto">

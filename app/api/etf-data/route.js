@@ -1,22 +1,19 @@
+import { Redis } from '@upstash/redis';
 import { NextResponse } from 'next/server';
 
-// ETFs to track - using US-listed ETFs (available on Twelve Data free tier)
-// These are popular ETFs that Canadians can also invest in
+const redis = Redis.fromEnv();
+
+// ETFs to track - US-listed ETFs (available on Twelve Data free tier)
 const ETF_LIST = [
   { symbol: 'VTI', name: 'Vanguard Total Stock Market', category: 'US Total Market' },
   { symbol: 'VOO', name: 'Vanguard S&P 500', category: 'US Large Cap' },
   { symbol: 'VT', name: 'Vanguard Total World Stock', category: 'Global Equity' },
   { symbol: 'QQQ', name: 'Invesco Nasdaq 100', category: 'US Tech' },
-  { symbol: 'VGT', name: 'Vanguard Info Tech', category: 'US Tech' },
   { symbol: 'SCHD', name: 'Schwab US Dividend', category: 'US Dividend' },
-  { symbol: 'BND', name: 'Vanguard Total Bond', category: 'US Bonds' },
-  { symbol: 'VWO', name: 'Vanguard Emerging Markets', category: 'Emerging Markets' },
 ];
 
-// Simple in-memory cache
-let cachedData = null;
-let cacheTimestamp = null;
-const CACHE_DURATION = 6 * 60 * 60 * 1000; // 6 hours
+// Cache duration: 24 hours
+const CACHE_DURATION_HOURS = 24;
 
 async function fetchETFData(symbol, apiKey) {
   try {
@@ -81,70 +78,165 @@ async function fetchETFData(symbol, apiKey) {
   }
 }
 
+async function fetchAllETFData(apiKey) {
+  const results = [];
+  
+  for (const etf of ETF_LIST) {
+    const data = await fetchETFData(etf.symbol, apiKey);
+    if (data) {
+      results.push({
+        ...data,
+        name: etf.name,
+        category: etf.category,
+      });
+    }
+    // Delay to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+  
+  return results;
+}
+
 export async function GET() {
   try {
     const apiKey = process.env.TWELVE_DATA_API_KEY;
     
-    if (!apiKey) {
-      console.error('TWELVE_DATA_API_KEY not configured');
-      return NextResponse.json({ 
-        error: 'API key not configured',
-        etfs: getStaticFallbackData()
-      }, { status: 200 });
-    }
-
-    // Check cache
-    const now = Date.now();
-    if (cachedData && cacheTimestamp && (now - cacheTimestamp) < CACHE_DURATION) {
-      return NextResponse.json({ 
-        etfs: cachedData, 
-        cached: true,
-        lastUpdated: new Date(cacheTimestamp).toISOString()
-      });
-    }
-
-    // Fetch fresh data (limit to 5 ETFs to stay within free tier: 8 calls/min)
-    const priorityETFs = ETF_LIST.slice(0, 5);
-    const results = [];
+    // Try to get cached data from Redis
+    const cachedData = await redis.get('girmer:etf:data');
+    const cachedTimestamp = await redis.get('girmer:etf:timestamp');
     
-    for (const etf of priorityETFs) {
-      const data = await fetchETFData(etf.symbol, apiKey);
-      if (data) {
-        results.push({
-          ...data,
-          name: etf.name,
-          category: etf.category,
+    if (cachedData && cachedTimestamp) {
+      const cacheAge = Date.now() - parseInt(cachedTimestamp);
+      const cacheAgeHours = cacheAge / (1000 * 60 * 60);
+      
+      // If cache is less than 24 hours old, return cached data
+      if (cacheAgeHours < CACHE_DURATION_HOURS) {
+        return NextResponse.json({
+          etfs: cachedData,
+          cached: true,
+          lastUpdated: new Date(parseInt(cachedTimestamp)).toISOString(),
+          cacheAgeHours: Math.round(cacheAgeHours * 10) / 10,
         });
       }
-      // Delay to avoid rate limiting (8 calls/min = 1 every 7.5 sec, but we're conservative)
-      await new Promise(resolve => setTimeout(resolve, 1000));
     }
-
-    if (results.length > 0) {
-      cachedData = results;
-      cacheTimestamp = now;
-      
-      return NextResponse.json({ 
-        etfs: results,
+    
+    // No valid cache - need to fetch fresh data
+    if (!apiKey) {
+      console.error('TWELVE_DATA_API_KEY not configured');
+      // Return cached data even if stale, or fallback
+      if (cachedData) {
+        return NextResponse.json({
+          etfs: cachedData,
+          cached: true,
+          stale: true,
+          lastUpdated: cachedTimestamp ? new Date(parseInt(cachedTimestamp)).toISOString() : null,
+          note: 'API key not configured, using stale cache',
+        });
+      }
+      return NextResponse.json({
+        etfs: getStaticFallbackData(),
         cached: false,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: null,
+        note: 'Using fallback data - API key not configured',
       });
     }
 
-    // If all fetches failed, return fallback
-    return NextResponse.json({ 
+    // Fetch fresh data
+    console.log('Fetching fresh ETF data from Twelve Data...');
+    const freshData = await fetchAllETFData(apiKey);
+    
+    if (freshData && freshData.length > 0) {
+      // Save to Redis
+      const timestamp = Date.now();
+      await redis.set('girmer:etf:data', freshData);
+      await redis.set('girmer:etf:timestamp', timestamp.toString());
+      
+      console.log(`Cached ${freshData.length} ETFs at ${new Date(timestamp).toISOString()}`);
+      
+      return NextResponse.json({
+        etfs: freshData,
+        cached: false,
+        lastUpdated: new Date(timestamp).toISOString(),
+      });
+    }
+    
+    // Fetch failed - return stale cache or fallback
+    if (cachedData) {
+      return NextResponse.json({
+        etfs: cachedData,
+        cached: true,
+        stale: true,
+        lastUpdated: cachedTimestamp ? new Date(parseInt(cachedTimestamp)).toISOString() : null,
+        note: 'API fetch failed, using stale cache',
+      });
+    }
+    
+    // No cache, no fresh data - use fallback
+    return NextResponse.json({
       etfs: getStaticFallbackData(),
       cached: false,
-      lastUpdated: new Date().toISOString(),
-      note: 'Using fallback data'
+      lastUpdated: null,
+      note: 'Using fallback data',
     });
 
   } catch (error) {
     console.error('ETF API error:', error);
-    return NextResponse.json({ 
+    
+    // Try to return cached data on error
+    try {
+      const cachedData = await redis.get('girmer:etf:data');
+      const cachedTimestamp = await redis.get('girmer:etf:timestamp');
+      if (cachedData) {
+        return NextResponse.json({
+          etfs: cachedData,
+          cached: true,
+          stale: true,
+          lastUpdated: cachedTimestamp ? new Date(parseInt(cachedTimestamp)).toISOString() : null,
+          note: 'Error occurred, using cached data',
+        });
+      }
+    } catch (redisError) {
+      console.error('Redis error:', redisError);
+    }
+    
+    return NextResponse.json({
+      etfs: getStaticFallbackData(),
+      cached: false,
+      lastUpdated: null,
       error: 'Failed to fetch ETF data',
-      etfs: getStaticFallbackData()
-    }, { status: 200 });
+    });
+  }
+}
+
+// Force refresh endpoint - can be called manually or via cron
+export async function POST(request) {
+  try {
+    const apiKey = process.env.TWELVE_DATA_API_KEY;
+    
+    if (!apiKey) {
+      return NextResponse.json({ error: 'API key not configured' }, { status: 500 });
+    }
+    
+    console.log('Force refreshing ETF data...');
+    const freshData = await fetchAllETFData(apiKey);
+    
+    if (freshData && freshData.length > 0) {
+      const timestamp = Date.now();
+      await redis.set('girmer:etf:data', freshData);
+      await redis.set('girmer:etf:timestamp', timestamp.toString());
+      
+      return NextResponse.json({
+        success: true,
+        etfsUpdated: freshData.length,
+        lastUpdated: new Date(timestamp).toISOString(),
+      });
+    }
+    
+    return NextResponse.json({ error: 'Failed to fetch data' }, { status: 500 });
+    
+  } catch (error) {
+    console.error('Force refresh error:', error);
+    return NextResponse.json({ error: 'Failed to refresh' }, { status: 500 });
   }
 }
 
